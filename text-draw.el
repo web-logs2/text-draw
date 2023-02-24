@@ -18,7 +18,7 @@
 
 ;;; Commentary:
 
-;; 
+;;
 
 ;;; Installation:
 ;; Manual:
@@ -105,10 +105,14 @@ FUN is function symbol."
         (picture-newline 1))
       (setq text-height (length text-split))
 
-      (setq text-width (seq-max (mapcar #'length text-split)))
+      (setq text-width (seq-max (mapcar #'text-length text-split)))
       (artist-draw-rect  col row
                          (+ col text-width text-draw--margin-left text-draw--margin-left 1)
                          (+ row text-height text-draw--margin-top text-draw--margin-top 1)))))
+
+(defun text-length (text)
+  "Compute TEXT lenght."
+  (with-temp-buffer (insert text) (current-column)))
 
 (defun text-draw--insert-text (str)
   "Insert STR text."
@@ -128,18 +132,140 @@ FUN is function symbol."
 
 (defun text-draw--rectangle-goto-start ()
   "Goto rectangle start."
-  (while (not (string= (thing-at-point 'char) "|"))
+  (while (not
+          (or
+           (text-draw--left-top-p)
+           (text-draw--left-down-p)
+           (text-draw--left-edge-p)))
     (rectangle-backward-char 1))
-  (while (not (string= (thing-at-point 'char) "+"))
-    (rectangle-previous-line 1)))
+  (while (not (text-draw--left-top-p)) (rectangle-previous-line 1)))
 
 (defun text-draw--rectangle-goto-end ()
   "Goto rectangle end."
-  (while (not (string= (thing-at-point 'char) "|"))
+  (while (not
+          (or
+           (text-draw--right-top-p)
+           (text-draw--right-down-p)
+           (text-draw--right-edge-p)))
     (rectangle-forward-char 1))
-  (while (not (string= (thing-at-point 'char) "+"))
-    (rectangle-next-line 1)))
+  (while (not (text-draw--right-down-p)) (rectangle-next-line 1)))
+
+(defun text-draw--pixel-x (point)
+  "Return the x pixel position of POINT."
+  (-
+   (car (window-text-pixel-size nil (line-beginning-position) point))
+   (line-number-display-width 'pixel)))
+
+(defsubst text-draw--space (xpos)
+  "Return a display property that aligns to XPOS."
+  `(space :align-to (,xpos)))
+
+(defun text-draw--space-to-pixel (xpos)
+  "Make point space aligin to XPOS."
+  (put-text-property
+   (1- (point))
+   (point)
+
+   'display
+   (text-draw--space xpos)))
+
+(defun text-draw-align ()
+  "Align edge."
+  (interactive)
+  (save-excursion
+    (let ((right-pixel 0))
+      (text-draw--rectangle-goto-end)
+      (setq right-pixel
+            (max right-pixel (text-draw--pixel-x (point))))
+      (artist-previous-line 1)
+      (setq right-pixel
+            (max right-pixel (text-draw--pixel-x (point))))
+      (while (not (string= (thing-at-point 'char) "+"))
+        (artist-previous-line 1)
+        (setq right-pixel
+              (max right-pixel (text-draw--pixel-x (point)))))
+
+      (text-draw--space-to-pixel right-pixel)
+      (artist-next-line 1)
+      (text-draw--space-to-pixel right-pixel)
+      (while (not (string= (thing-at-point 'char) "+"))
+        (artist-next-line 1)
+        (text-draw--space-to-pixel right-pixel))
+      (text-draw--space-to-pixel right-pixel))
+
+    ))
+
+(defun text-draw--position-p (pos-preds)
+  "Check point if match POS-PREDS."
+  (let ((pos
+         (list
+          (cons "left" (string (preceding-char)))
+          (cons "current" (string (following-char)))
+          (cons "right"
+                (string (char-after (1+ (point)))))
+          (cons "up" (string (text-draw--up-pos-char)))
+          (cons "down" (string (text-draw--down-pos-char))))))
+    (cl-every
+     #'identity
+     (mapcar
+      (lambda (pos-pred)
+        (string=
+         (cdr (assoc (car pos-pred) pos))
+         (cdr pos-pred)))
+      pos-preds))))
+
+(defun text-draw--edge-p (pos)
+  "Check current point if a POS edge."
+  (and
+   (string= (string (following-char)) "|")
+   (save-excursion
+     (while (not (string= (string (following-char)) "+"))
+       (artist-previous-line 1))
+     (funcall (intern (format "text-draw--%s-top-p" pos))))))
+
+(defun text-draw--left-edge-p ()
+  "Check current point if a left edge."
+  (text-draw--edge-p "left"))
+
+(defun text-draw--right-edge-p ()
+  "Check current point if a right edge."
+  (text-draw--edge-p "right"))
+
+(defun text-draw--left-top-p ()
+  "Check point if left top."
+  (text-draw--position-p
+   '(("current" . "+")
+     ("right" . "-")
+     ("down" . "|"))))
+
+(defun text-draw--right-top-p ()
+  "Check point if right top."
+  (text-draw--position-p
+   '(("current" . "+")
+     ("left" . "-")
+     ("down" . "|"))))
+
+(defun text-draw--right-down-p ()
+  "Check point if right down."
+  (text-draw--position-p
+   '(("current" . "+")
+     ("left" . "-")
+     ("up" . "|"))))
+
+(defun text-draw--left-down-p ()
+  "Check point if left down."
+  (text-draw--position-p
+   '(("current" . "+")
+     ("right" . "-")
+     ("up" . "|"))))
+
+(defun text-draw--up-pos-char ()
+  "Get up position char."
+  (save-excursion (artist-previous-line 1) (following-char)))
+
+(defun text-draw--down-pos-char ()
+  "Get up position char."
+  (save-excursion (artist-next-line 1) (following-char)))
 
 (provide 'text-draw)
 ;;; text-draw.el ends here
-

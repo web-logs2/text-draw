@@ -38,6 +38,12 @@
 
 (require 'artist)
 (require 'array)
+
+(defcustom text-draw-ditaa-cmd "ditaa --svg -r %s -o %s"
+  "Ditaa cmd template.")
+
+(defvar text-draw-ditaa-preview-temp-file nil)
+
 (defvar text-draw--margin-left 1)
 (defvar text-draw--margin-top 1)
 
@@ -83,7 +89,8 @@ FUN is function symbol."
     (artist-mode-off))
   (when (not (bound-and-true-p picture-mode))
     ;; picture-mode not on.
-    (picture-mode)))
+    (picture-mode))
+  (text-draw-align))
 
 
 (defun text-draw--square-at-point-with-text()
@@ -100,7 +107,7 @@ FUN is function symbol."
       (setq text-split (split-string text "\n" t " +"))
       (picture-newline (+ text-draw--margin-top 1))
       (dolist (line text-split)
-        (picture-forward-column (+ col 2))
+        (picture-forward-column (+ col 3))
         (text-draw--insert-text line)
         (picture-newline 1))
       (setq text-height (length text-split))
@@ -116,9 +123,10 @@ FUN is function symbol."
 
 (defun text-draw--insert-text (str)
   "Insert STR text."
-  (dolist (char (append str nil)) (insert char)
-          ;; (call-interactively 'picture-self-insert)
-          ))
+  (dolist (char (append str nil))
+    (delete-char -1)
+    (insert char)
+    (call-interactively 'picture-forward-column)))
 
 (defun text-draw-mark-rectangle ()
   "Mark rectangle."
@@ -266,6 +274,105 @@ FUN is function symbol."
 (defun text-draw--down-pos-char ()
   "Get up position char."
   (save-excursion (artist-next-line 1) (following-char)))
+
+(defun text-draw--extract-content ()
+  "Extract content in diagram.
+Return value is content lines list."
+  (save-excursion
+    (text-draw-mark-rectangle)
+    (call-interactively 'kill-ring-save)
+    (with-temp-buffer
+      (yank)
+      (goto-char (point-min))
+      (while (re-search-forward "[+|-]" nil t) (replace-match ""))
+      (string-split
+       (substring-no-properties (buffer-string))
+       "\n" t " +"))))
+
+(defun text-draw--min-size ()
+  "Get diagram min size."
+  (let ((content (text-draw--extract-content))
+        height
+        width)
+    (setq height
+          (+
+           (length content)
+           text-draw--margin-top text-draw--margin-top 2))
+    (setq width
+          (+
+           (seq-max (mapcar #'length content))
+           text-draw--margin-left text-draw--margin-left 2))
+    (cons height width))
+
+  )
+
+(defun text-draw-ditaa-chinese-align ()
+  "Add align for ditaa chinese parse."
+  (let ((regex-block "|.*?|")
+        (regex-chinese "\\cc+")
+        match-block
+        match-chinese
+        chinese-lenght
+        words
+        old-space-count
+        new-space-count
+        half-space-count
+        replace-block-string)
+    (while (search-forward-regexp regex-block nil t)
+      (setq match-block (substring-no-properties (match-string 0)))
+      (setq match-chinese
+            (save-excursion
+              (with-temp-buffer
+                (insert match-block)
+                (goto-char (point-min))
+                (when (search-forward-regexp regex-chinese nil t)
+                  (substring-no-properties (match-string 0))))))
+      (setq words
+            (string-trim (substring-no-properties match-block 1 -1)))
+      (setq old-space-count
+            (- (length match-block) (length words) 2))
+      (setq new-space-count
+            (+ old-space-count (length match-chinese)))
+      (setq chinese-lenght (length match-chinese))
+      (setq half-space-count (/ new-space-count 2))
+      (if (eq 0 (% new-space-count 2))
+          (setq replace-block-string
+                (concat "|"
+                        (make-string half-space-count
+                                     (string-to-char " "))
+                        words
+                        (make-string half-space-count
+                                     (string-to-char " "))
+                        "|"))
+        (setq replace-block-string
+              (concat "|"
+                      (make-string half-space-count
+                                   (string-to-char " "))
+                      words
+                      (make-string
+                       (+ half-space-count 1)
+                       (string-to-char " "))
+                      "|")))
+      (search-backward-regexp regex-block)
+      (replace-match replace-block-string))))
+
+(defun text-draw-ditaa ()
+  (interactive)
+  (let ((buffer-string (buffer-string))
+        )
+    (when (not text-draw-ditaa-preview-temp-file)
+      (setq text-draw-ditaa-preview-temp-file
+            (make-temp-file "ditaa-preview--")))
+    (with-temp-file text-draw-ditaa-preview-temp-file
+      (erase-buffer)
+      (insert buffer-string)
+      (goto-char (point-min))
+      (text-draw-ditaa-chinese-align))
+    (start-process-shell-command
+     "ditaa"
+     nil
+     (format text-draw-ditaa-cmd text-draw-ditaa-preview-temp-file
+             (concat text-draw-ditaa-preview-temp-file ".svg")))))
 
 (provide 'text-draw)
 ;;; text-draw.el ends here
